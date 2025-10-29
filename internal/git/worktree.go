@@ -3,7 +3,9 @@ package git
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -126,4 +128,175 @@ func RemoveWorktree(path string) error {
 		return fmt.Errorf("failed to remove worktree: %s", stderr.String())
 	}
 	return nil
+}
+
+// PathSuggestion represents a suggested path with description
+type PathSuggestion struct {
+	Path        string
+	Description string
+	IsCustom    bool
+}
+
+// SuggestPaths generates path suggestions based on existing worktrees and the new branch
+func SuggestPaths(branch string) ([]PathSuggestion, error) {
+	worktrees, err := ListWorktrees()
+	if err != nil {
+		return nil, err
+	}
+
+	var suggestions []PathSuggestion
+	seen := make(map[string]bool)
+
+	// Skip the main worktree (first one) for pattern analysis
+	if len(worktrees) > 1 {
+		patterns := analyzePathPatterns(worktrees[1:])
+
+		// Generate suggestions from learned patterns
+		for _, pattern := range patterns {
+			path := applyPattern(pattern, branch)
+			if path != "" && !seen[path] {
+				seen[path] = true
+				suggestions = append(suggestions, PathSuggestion{
+					Path:        path,
+					Description: fmt.Sprintf("Learned pattern (%d similar)", pattern.Count),
+					IsCustom:    false,
+				})
+			}
+		}
+	}
+
+	// Add default patterns if we don't have many suggestions
+	if len(suggestions) < 3 {
+		defaultSuggestions := getDefaultSuggestions(branch)
+		for _, sug := range defaultSuggestions {
+			if !seen[sug.Path] {
+				seen[sug.Path] = true
+				suggestions = append(suggestions, sug)
+			}
+		}
+	}
+
+	// Add custom input option at the end
+	suggestions = append(suggestions, PathSuggestion{
+		Path:        "",
+		Description: "Enter custom path...",
+		IsCustom:    true,
+	})
+
+	return suggestions, nil
+}
+
+// pathPattern represents a detected path pattern
+type pathPattern struct {
+	Template string // e.g., "../{branch}", "../worktrees/{branch}"
+	Count    int    // How many times this pattern appears
+}
+
+// analyzePathPatterns analyzes existing worktree paths to detect patterns
+func analyzePathPatterns(worktrees []Worktree) []pathPattern {
+	patternMap := make(map[string]int)
+
+	for _, wt := range worktrees {
+		if wt.Branch == "" {
+			continue
+		}
+
+		// Try to extract pattern by replacing branch name
+		pattern := extractPattern(wt.Path, wt.Branch)
+		if pattern != "" {
+			patternMap[pattern]++
+		}
+	}
+
+	// Convert map to sorted slice
+	var patterns []pathPattern
+	for template, count := range patternMap {
+		patterns = append(patterns, pathPattern{
+			Template: template,
+			Count:    count,
+		})
+	}
+
+	// Sort by count (most used first)
+	for i := 0; i < len(patterns)-1; i++ {
+		for j := i + 1; j < len(patterns); j++ {
+			if patterns[j].Count > patterns[i].Count {
+				patterns[i], patterns[j] = patterns[j], patterns[i]
+			}
+		}
+	}
+
+	return patterns
+}
+
+// extractPattern tries to extract a path pattern by replacing branch name with placeholder
+func extractPattern(path, branch string) string {
+	// Normalize branch name (replace slashes with dashes for comparison)
+	normalizedBranch := strings.ReplaceAll(branch, "/", "-")
+
+	// Try different variations
+	variations := []string{
+		branch,
+		normalizedBranch,
+		strings.ToLower(branch),
+		strings.ToLower(normalizedBranch),
+	}
+
+	for _, variant := range variations {
+		if strings.Contains(path, variant) {
+			pattern := strings.ReplaceAll(path, variant, "{branch}")
+			return pattern
+		}
+	}
+
+	return ""
+}
+
+// applyPattern applies a pattern template to a new branch name
+func applyPattern(pattern pathPattern, branch string) string {
+	// Normalize branch name for path
+	normalizedBranch := strings.ReplaceAll(branch, "/", "-")
+
+	path := strings.ReplaceAll(pattern.Template, "{branch}", normalizedBranch)
+	return path
+}
+
+// getDefaultSuggestions returns default path suggestions when no patterns are learned
+func getDefaultSuggestions(branch string) []PathSuggestion {
+	normalizedBranch := strings.ReplaceAll(branch, "/", "-")
+
+	// Get repository name for some suggestions
+	repoName := getRepoName()
+
+	suggestions := []PathSuggestion{
+		{
+			Path:        fmt.Sprintf("../%s", normalizedBranch),
+			Description: "Sibling directory (default)",
+			IsCustom:    false,
+		},
+		{
+			Path:        fmt.Sprintf("../worktrees/%s", normalizedBranch),
+			Description: "Organized in worktrees folder",
+			IsCustom:    false,
+		},
+	}
+
+	if repoName != "" {
+		suggestions = append(suggestions, PathSuggestion{
+			Path:        fmt.Sprintf("../%s-%s", repoName, normalizedBranch),
+			Description: "With repository name prefix",
+			IsCustom:    false,
+		})
+	}
+
+	return suggestions
+}
+
+// getRepoName tries to get the current repository name
+func getRepoName() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(cwd)
 }

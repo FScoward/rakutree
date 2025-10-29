@@ -17,6 +17,8 @@ const (
 	menuView viewState = iota
 	listView
 	addView
+	pathSelectView
+	customPathView
 	removeView
 )
 
@@ -50,16 +52,18 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 type Model struct {
-	state       viewState
-	list        list.Model
-	pathInput   textinput.Model
-	worktrees   []git.Worktree
-	branches    []string
-	err         error
-	message     string
-	quitting    bool
-	width       int
-	height      int
+	state            viewState
+	list             list.Model
+	pathInput        textinput.Model
+	worktrees        []git.Worktree
+	branches         []string
+	selectedBranch   string
+	pathSuggestions  []git.PathSuggestion
+	err              error
+	message          string
+	quitting         bool
+	width            int
+	height           int
 }
 
 func NewModel() Model {
@@ -127,11 +131,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case menuView, listView, removeView:
+	case menuView, listView, removeView, pathSelectView:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
-	case addView:
+	case addView, customPathView:
 		var cmd tea.Cmd
 		m.pathInput, cmd = m.pathInput.Update(msg)
 		return m, cmd
@@ -230,14 +234,82 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 
 		branch := selected.(item).title
-		path := m.pathInput.Value()
+		m.selectedBranch = branch
 
-		if path == "" {
-			// Generate default path
-			path = fmt.Sprintf("../%s", branch)
+		// Get path suggestions based on branch
+		suggestions, err := git.SuggestPaths(branch)
+		if err != nil {
+			m.err = err
+			m.state = menuView
+			return m, nil
+		}
+		m.pathSuggestions = suggestions
+
+		// Show path selection screen
+		items := make([]list.Item, len(suggestions))
+		for i, sug := range suggestions {
+			title := sug.Path
+			if sug.IsCustom {
+				title = "✏️  Custom path..."
+			}
+			items[i] = item{
+				title: title,
+				desc:  sug.Description,
+			}
+		}
+		m.list.SetItems(items)
+		m.list.Title = fmt.Sprintf("Select path for '%s' (ESC to cancel)", branch)
+		m.state = pathSelectView
+
+	case pathSelectView:
+		selected := m.list.SelectedItem()
+		if selected == nil {
+			return m, nil
 		}
 
-		err := git.AddWorktree(path, branch)
+		// Find the selected suggestion
+		selectedIndex := -1
+		for i, item := range m.list.Items() {
+			if item == selected {
+				selectedIndex = i
+				break
+			}
+		}
+
+		if selectedIndex < 0 || selectedIndex >= len(m.pathSuggestions) {
+			return m, nil
+		}
+
+		suggestion := m.pathSuggestions[selectedIndex]
+
+		// If custom path selected, show input
+		if suggestion.IsCustom {
+			m.pathInput.SetValue("")
+			m.pathInput.Placeholder = "Enter custom path (e.g., ../my-worktree)"
+			m.state = customPathView
+			return m, nil
+		}
+
+		// Otherwise, use the suggested path
+		err := git.AddWorktree(suggestion.Path, m.selectedBranch)
+		if err != nil {
+			m.err = err
+		} else {
+			m.message = fmt.Sprintf("Successfully added worktree at %s", suggestion.Path)
+		}
+		m.state = menuView
+		m.resetMenuItems()
+
+	case customPathView:
+		path := m.pathInput.Value()
+		if path == "" {
+			m.err = fmt.Errorf("path cannot be empty")
+			m.state = menuView
+			m.resetMenuItems()
+			return m, nil
+		}
+
+		err := git.AddWorktree(path, m.selectedBranch)
 		if err != nil {
 			m.err = err
 		} else {
@@ -302,7 +374,16 @@ func (m Model) View() string {
 	case addView:
 		s.WriteString(m.list.View())
 		s.WriteString("\n\n")
-		s.WriteString("Path for new worktree:\n")
+		s.WriteString("Press Enter to select branch, ESC to cancel")
+	case pathSelectView:
+		s.WriteString(m.list.View())
+		s.WriteString("\n\n")
+		s.WriteString("💡 Suggestions are learned from your existing worktrees\n")
+		s.WriteString("Press Enter to select, ESC to cancel")
+	case customPathView:
+		s.WriteString(titleStyle.Render(fmt.Sprintf("Custom path for '%s'", m.selectedBranch)))
+		s.WriteString("\n\n")
+		s.WriteString("Enter custom path:\n")
 		s.WriteString(m.pathInput.View())
 		s.WriteString("\n\n")
 		s.WriteString("Press Enter to confirm, ESC to cancel")
