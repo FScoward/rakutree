@@ -119,6 +119,17 @@ func AddWorktree(path, branch string) error {
 	return nil
 }
 
+// AddWorktreeWithNewBranch creates a new branch and adds a worktree for it
+func AddWorktreeWithNewBranch(path, newBranch, baseBranch string) error {
+	cmd := exec.Command("git", "worktree", "add", "-b", newBranch, path, baseBranch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to add worktree with new branch: %s", stderr.String())
+	}
+	return nil
+}
+
 // RemoveWorktree removes a worktree
 func RemoveWorktree(path string) error {
 	cmd := exec.Command("git", "worktree", "remove", path)

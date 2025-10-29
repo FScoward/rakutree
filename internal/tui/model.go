@@ -16,7 +16,10 @@ type viewState int
 const (
 	menuView viewState = iota
 	listView
+	branchModeSelectView
 	addView
+	newBranchBaseView
+	newBranchNameView
 	pathSelectView
 	customPathView
 	removeView
@@ -55,9 +58,12 @@ type Model struct {
 	state            viewState
 	list             list.Model
 	pathInput        textinput.Model
+	branchNameInput  textinput.Model
 	worktrees        []git.Worktree
 	branches         []string
 	selectedBranch   string
+	baseBranch       string
+	isNewBranch      bool
 	pathSuggestions  []git.PathSuggestion
 	err              error
 	message          string
@@ -73,6 +79,11 @@ func NewModel() Model {
 	ti.CharLimit = 256
 	ti.Width = 50
 
+	bi := textinput.New()
+	bi.Placeholder = "Enter new branch name (e.g., feature/new-feature)"
+	bi.CharLimit = 256
+	bi.Width = 50
+
 	items := []list.Item{
 		item{title: "List Worktrees", desc: "View all existing worktrees"},
 		item{title: "Add Worktree", desc: "Create a new worktree"},
@@ -86,9 +97,10 @@ func NewModel() Model {
 	l.SetFilteringEnabled(false)
 
 	return Model{
-		state:     menuView,
-		list:      l,
-		pathInput: ti,
+		state:           menuView,
+		list:            l,
+		pathInput:       ti,
+		branchNameInput: bi,
 	}
 }
 
@@ -131,9 +143,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case menuView, listView, addView, removeView, pathSelectView:
+	case menuView, listView, branchModeSelectView, addView, newBranchBaseView, removeView, pathSelectView:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	case newBranchNameView:
+		var cmd tea.Cmd
+		m.branchNameInput, cmd = m.branchNameInput.Update(msg)
 		return m, cmd
 	case customPathView:
 		var cmd tea.Cmd
@@ -178,20 +194,14 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.list.Title = "Worktrees (press ESC to go back)"
 
 		case "Add Worktree":
-			branches, err := git.ListBranches()
-			if err != nil {
-				m.err = err
-				return m, nil
-			}
-			m.branches = branches
-
-			items := make([]list.Item, len(branches))
-			for i, branch := range branches {
-				items[i] = item{title: branch, desc: ""}
+			// Show branch mode selection
+			items := []list.Item{
+				item{title: "Use existing branch", desc: "Select from existing branches"},
+				item{title: "Create new branch", desc: "Create a new branch and worktree"},
 			}
 			m.list.SetItems(items)
-			m.list.Title = "Select a branch (press ESC to cancel)"
-			m.state = addView
+			m.list.Title = "Choose branch mode (press ESC to cancel)"
+			m.state = branchModeSelectView
 
 		case "Remove Worktree":
 			worktrees, err := git.ListWorktrees()
@@ -226,6 +236,98 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
+
+	case branchModeSelectView:
+		selected := m.list.SelectedItem()
+		if selected == nil {
+			return m, nil
+		}
+
+		switch selected.(item).title {
+		case "Use existing branch":
+			m.isNewBranch = false
+			branches, err := git.ListBranches()
+			if err != nil {
+				m.err = err
+				m.state = menuView
+				return m, nil
+			}
+			m.branches = branches
+
+			items := make([]list.Item, len(branches))
+			for i, branch := range branches {
+				items[i] = item{title: branch, desc: ""}
+			}
+			m.list.SetItems(items)
+			m.list.Title = "Select an existing branch (press ESC to cancel)"
+			m.state = addView
+
+		case "Create new branch":
+			m.isNewBranch = true
+			branches, err := git.ListBranches()
+			if err != nil {
+				m.err = err
+				m.state = menuView
+				return m, nil
+			}
+			m.branches = branches
+
+			items := make([]list.Item, len(branches))
+			for i, branch := range branches {
+				items[i] = item{title: branch, desc: "Base branch for new branch"}
+			}
+			m.list.SetItems(items)
+			m.list.Title = "Select base branch (press ESC to cancel)"
+			m.state = newBranchBaseView
+		}
+
+	case newBranchBaseView:
+		selected := m.list.SelectedItem()
+		if selected == nil {
+			return m, nil
+		}
+
+		m.baseBranch = selected.(item).title
+		m.branchNameInput.SetValue("")
+		m.branchNameInput.Focus()
+		m.state = newBranchNameView
+
+	case newBranchNameView:
+		newBranchName := m.branchNameInput.Value()
+		if newBranchName == "" {
+			m.err = fmt.Errorf("branch name cannot be empty")
+			m.state = menuView
+			m.resetMenuItems()
+			return m, nil
+		}
+
+		m.selectedBranch = newBranchName
+
+		// Get path suggestions based on new branch name
+		suggestions, err := git.SuggestPaths(newBranchName)
+		if err != nil {
+			m.err = err
+			m.state = menuView
+			m.resetMenuItems()
+			return m, nil
+		}
+		m.pathSuggestions = suggestions
+
+		// Show path selection screen
+		items := make([]list.Item, len(suggestions))
+		for i, sug := range suggestions {
+			title := sug.Path
+			if sug.IsCustom {
+				title = "✏️  Custom path..."
+			}
+			items[i] = item{
+				title: title,
+				desc:  sug.Description,
+			}
+		}
+		m.list.SetItems(items)
+		m.list.Title = fmt.Sprintf("Select path for new branch '%s' (ESC to cancel)", newBranchName)
+		m.state = pathSelectView
 
 	case addView:
 		selected := m.list.SelectedItem()
@@ -291,11 +393,23 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 
 		// Otherwise, use the suggested path
-		err := git.AddWorktree(suggestion.Path, m.selectedBranch)
-		if err != nil {
-			m.err = err
+		var err error
+		if m.isNewBranch {
+			// Create worktree with new branch
+			err = git.AddWorktreeWithNewBranch(suggestion.Path, m.selectedBranch, m.baseBranch)
+			if err != nil {
+				m.err = err
+			} else {
+				m.message = fmt.Sprintf("Successfully created branch '%s' and worktree at %s", m.selectedBranch, suggestion.Path)
+			}
 		} else {
-			m.message = fmt.Sprintf("Successfully added worktree at %s", suggestion.Path)
+			// Use existing branch
+			err = git.AddWorktree(suggestion.Path, m.selectedBranch)
+			if err != nil {
+				m.err = err
+			} else {
+				m.message = fmt.Sprintf("Successfully added worktree at %s", suggestion.Path)
+			}
 		}
 		m.state = menuView
 		m.resetMenuItems()
@@ -309,11 +423,23 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		err := git.AddWorktree(path, m.selectedBranch)
-		if err != nil {
-			m.err = err
+		var err error
+		if m.isNewBranch {
+			// Create worktree with new branch
+			err = git.AddWorktreeWithNewBranch(path, m.selectedBranch, m.baseBranch)
+			if err != nil {
+				m.err = err
+			} else {
+				m.message = fmt.Sprintf("Successfully created branch '%s' and worktree at %s", m.selectedBranch, path)
+			}
 		} else {
-			m.message = fmt.Sprintf("Successfully added worktree at %s", path)
+			// Use existing branch
+			err = git.AddWorktree(path, m.selectedBranch)
+			if err != nil {
+				m.err = err
+			} else {
+				m.message = fmt.Sprintf("Successfully added worktree at %s", path)
+			}
 		}
 		m.pathInput.SetValue("")
 		m.state = menuView
@@ -371,10 +497,25 @@ func (m Model) View() string {
 			s.WriteString("\n\n")
 			s.WriteString("Use ↑/↓ to navigate, Enter to select, q to quit")
 		}
+	case branchModeSelectView:
+		s.WriteString(m.list.View())
+		s.WriteString("\n\n")
+		s.WriteString("Press Enter to select mode, ESC to cancel")
 	case addView:
 		s.WriteString(m.list.View())
 		s.WriteString("\n\n")
 		s.WriteString("Press Enter to select branch, ESC to cancel")
+	case newBranchBaseView:
+		s.WriteString(m.list.View())
+		s.WriteString("\n\n")
+		s.WriteString("Select base branch for new branch, ESC to cancel")
+	case newBranchNameView:
+		s.WriteString(titleStyle.Render(fmt.Sprintf("Create new branch from '%s'", m.baseBranch)))
+		s.WriteString("\n\n")
+		s.WriteString("Enter new branch name:\n")
+		s.WriteString(m.branchNameInput.View())
+		s.WriteString("\n\n")
+		s.WriteString("Press Enter to confirm, ESC to cancel")
 	case pathSelectView:
 		s.WriteString(m.list.View())
 		s.WriteString("\n\n")
