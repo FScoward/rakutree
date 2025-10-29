@@ -348,3 +348,89 @@ func getRepoName() string {
 	}
 	return filepath.Base(cwd)
 }
+
+// BranchNameSuggestion represents a suggested branch name
+type BranchNameSuggestion struct {
+	Name        string
+	Description string
+	IsCustom    bool
+}
+
+// SuggestBranchNames generates branch name suggestions based on existing branches
+func SuggestBranchNames() ([]BranchNameSuggestion, error) {
+	branches, err := ListBranches()
+	if err != nil {
+		return nil, err
+	}
+
+	var suggestions []BranchNameSuggestion
+	seen := make(map[string]bool)
+
+	// Analyze existing branches for patterns
+	prefixCounts := analyzeBranchPrefixes(branches)
+
+	// Add learned prefix patterns
+	for prefix, count := range prefixCounts {
+		if count >= 2 && !seen[prefix] { // Only suggest if used at least twice
+			seen[prefix] = true
+			suggestions = append(suggestions, BranchNameSuggestion{
+				Name:        prefix,
+				Description: fmt.Sprintf("Learned pattern (%d branches)", count),
+				IsCustom:    false,
+			})
+		}
+	}
+
+	// Add common prefixes
+	commonPrefixes := []struct {
+		prefix string
+		desc   string
+	}{
+		{"feature/", "New feature"},
+		{"bugfix/", "Bug fix"},
+		{"hotfix/", "Urgent fix"},
+		{"release/", "Release branch"},
+		{"refactor/", "Code refactoring"},
+		{"chore/", "Maintenance task"},
+	}
+
+	for _, cp := range commonPrefixes {
+		if !seen[cp.prefix] {
+			seen[cp.prefix] = true
+			suggestions = append(suggestions, BranchNameSuggestion{
+				Name:        cp.prefix,
+				Description: cp.desc,
+				IsCustom:    false,
+			})
+		}
+	}
+
+	// Add custom input option
+	suggestions = append(suggestions, BranchNameSuggestion{
+		Name:        "",
+		Description: "Enter custom branch name...",
+		IsCustom:    true,
+	})
+
+	return suggestions, nil
+}
+
+// analyzeBranchPrefixes analyzes branch names to find common prefixes
+func analyzeBranchPrefixes(branches []string) map[string]int {
+	prefixCounts := make(map[string]int)
+
+	for _, branch := range branches {
+		// Skip main/master branches
+		if branch == "main" || branch == "master" {
+			continue
+		}
+
+		// Look for patterns like "feature/", "bugfix/", etc.
+		if idx := strings.Index(branch, "/"); idx > 0 {
+			prefix := branch[:idx+1]
+			prefixCounts[prefix]++
+		}
+	}
+
+	return prefixCounts
+}

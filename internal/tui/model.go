@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/FScoward/rakutree/internal/git"
@@ -19,6 +20,7 @@ const (
 	branchModeSelectView
 	addView
 	newBranchBaseView
+	branchNameSuggestionView
 	newBranchNameView
 	pathSelectView
 	customPathView
@@ -55,21 +57,23 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 type Model struct {
-	state            viewState
-	list             list.Model
-	pathInput        textinput.Model
-	branchNameInput  textinput.Model
-	worktrees        []git.Worktree
-	branches         []string
-	selectedBranch   string
-	baseBranch       string
-	isNewBranch      bool
-	pathSuggestions  []git.PathSuggestion
-	err              error
-	message          string
-	quitting         bool
-	width            int
-	height           int
+	state                 viewState
+	list                  list.Model
+	pathInput             textinput.Model
+	branchNameInput       textinput.Model
+	worktrees             []git.Worktree
+	branches              []string
+	selectedBranch        string
+	baseBranch            string
+	selectedPrefix        string
+	isNewBranch           bool
+	pathSuggestions       []git.PathSuggestion
+	branchNameSuggestions []git.BranchNameSuggestion
+	err                   error
+	message               string
+	quitting              bool
+	width                 int
+	height                int
 }
 
 func NewModel() Model {
@@ -143,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case menuView, listView, branchModeSelectView, addView, newBranchBaseView, removeView, pathSelectView:
+	case menuView, listView, branchModeSelectView, addView, newBranchBaseView, branchNameSuggestionView, removeView, pathSelectView:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
@@ -237,6 +241,10 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+	case listView:
+		// Just viewing, do nothing on Enter
+		return m, nil
+
 	case branchModeSelectView:
 		selected := m.list.SelectedItem()
 		if selected == nil {
@@ -290,7 +298,58 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		}
 
 		m.baseBranch = selected.(item).title
-		m.branchNameInput.SetValue("")
+
+		// Get branch name suggestions
+		suggestions, err := git.SuggestBranchNames()
+		if err != nil {
+			m.err = err
+			m.state = menuView
+			m.resetMenuItems()
+			return m, nil
+		}
+		m.branchNameSuggestions = suggestions
+
+		// Show branch name suggestion screen
+		items := make([]list.Item, len(suggestions))
+		for i, sug := range suggestions {
+			title := sug.Name
+			if sug.IsCustom {
+				title = "✏️  Custom name..."
+			}
+			items[i] = item{
+				title: title,
+				desc:  sug.Description,
+			}
+		}
+		m.list.SetItems(items)
+		m.list.SetFilteringEnabled(false)
+		m.list.Title = "Select branch name pattern (ESC to cancel)"
+		m.state = branchNameSuggestionView
+
+	case branchNameSuggestionView:
+		selected := m.list.SelectedItem()
+		if selected == nil {
+			return m, nil
+		}
+
+		// Find the selected suggestion
+		selectedIndex := -1
+		for i, item := range m.list.Items() {
+			if item == selected {
+				selectedIndex = i
+				break
+			}
+		}
+
+		if selectedIndex < 0 || selectedIndex >= len(m.branchNameSuggestions) {
+			return m, nil
+		}
+
+		suggestion := m.branchNameSuggestions[selectedIndex]
+		m.selectedPrefix = suggestion.Name
+
+		// Show text input for branch name
+		m.branchNameInput.SetValue(suggestion.Name)
 		m.branchNameInput.Focus()
 		m.state = newBranchNameView
 
@@ -319,12 +378,18 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		items := make([]list.Item, len(suggestions))
 		for i, sug := range suggestions {
 			title := sug.Path
+			desc := sug.Description
 			if sug.IsCustom {
 				title = "✏️  Custom path..."
+			} else {
+				// Add full path to description
+				if absPath, err := filepath.Abs(sug.Path); err == nil {
+					desc = fmt.Sprintf("%s → %s", sug.Description, absPath)
+				}
 			}
 			items[i] = item{
 				title: title,
-				desc:  sug.Description,
+				desc:  desc,
 			}
 		}
 		m.list.SetItems(items)
@@ -353,12 +418,18 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		items := make([]list.Item, len(suggestions))
 		for i, sug := range suggestions {
 			title := sug.Path
+			desc := sug.Description
 			if sug.IsCustom {
 				title = "✏️  Custom path..."
+			} else {
+				// Add full path to description
+				if absPath, err := filepath.Abs(sug.Path); err == nil {
+					desc = fmt.Sprintf("%s → %s", sug.Description, absPath)
+				}
 			}
 			items[i] = item{
 				title: title,
-				desc:  sug.Description,
+				desc:  desc,
 			}
 		}
 		m.list.SetItems(items)
@@ -512,10 +583,15 @@ func (m Model) View() string {
 		s.WriteString(m.list.View())
 		s.WriteString("\n\n")
 		s.WriteString("Select base branch for new branch, ESC to cancel")
+	case branchNameSuggestionView:
+		s.WriteString(m.list.View())
+		s.WriteString("\n\n")
+		s.WriteString("💡 Patterns learned from existing branches\n")
+		s.WriteString("Press Enter to select, ESC to cancel")
 	case newBranchNameView:
 		s.WriteString(titleStyle.Render(fmt.Sprintf("Create new branch from '%s'", m.baseBranch)))
 		s.WriteString("\n\n")
-		s.WriteString("Enter new branch name:\n")
+		s.WriteString("Enter branch name:\n")
 		s.WriteString(m.branchNameInput.View())
 		s.WriteString("\n\n")
 		s.WriteString("Press Enter to confirm, ESC to cancel")
