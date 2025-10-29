@@ -131,11 +131,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch m.state {
-	case menuView, listView, removeView, pathSelectView:
+	case menuView, listView, addView, removeView, pathSelectView:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
 		return m, cmd
-	case addView, customPathView:
+	case customPathView:
 		var cmd tea.Cmd
 		m.pathInput, cmd = m.pathInput.Update(msg)
 		return m, cmd
