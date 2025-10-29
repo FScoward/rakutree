@@ -13,7 +13,7 @@ Git worktree管理を楽にするTUIツール
 ## インストール
 
 ```bash
-go install github.com/FScoward/rakutree/cmd/rakutree@latest
+go install github.com/FScoward/rakutree/cmd/rtr@latest
 ```
 
 または、ソースからビルド:
@@ -21,7 +21,7 @@ go install github.com/FScoward/rakutree/cmd/rakutree@latest
 ```bash
 git clone https://github.com/FScoward/rakutree.git
 cd rakutree
-go build -o rakutree ./cmd/rakutree
+go build -o rtr ./cmd/rtr
 ```
 
 ## 使い方
@@ -29,7 +29,7 @@ go build -o rakutree ./cmd/rakutree
 gitリポジトリ内で実行:
 
 ```bash
-rakutree
+rtr
 ```
 
 ### 操作方法
@@ -73,7 +73,7 @@ rakutree
 
 ```
 rakutree/
-├── cmd/rakutree/       # メインエントリーポイント
+├── cmd/rtr/           # メインエントリーポイント
 ├── internal/
 │   ├── git/           # git worktree操作
 │   └── tui/           # TUI実装
