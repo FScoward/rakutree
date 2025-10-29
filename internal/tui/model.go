@@ -138,8 +138,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = menuView
 				m.err = nil
 				m.message = ""
+				m.resetMenuItems()
 				return m, nil
 			}
+			// In menuView, don't pass ESC to list component
+			return m, nil
 
 		case "enter":
 			return m.handleEnter()
