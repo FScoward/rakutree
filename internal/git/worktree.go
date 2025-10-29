@@ -105,7 +105,44 @@ func ListBranches() ([]string, error) {
 		}
 	}
 
-	return uniqueBranches, nil
+	// Sort branches: main/master first, then alphabetically
+	return sortBranches(uniqueBranches), nil
+}
+
+// sortBranches sorts branches with main/master at the top
+func sortBranches(branches []string) []string {
+	var priorityBranches []string
+	var otherBranches []string
+
+	for _, branch := range branches {
+		if branch == "main" || branch == "master" {
+			priorityBranches = append(priorityBranches, branch)
+		} else {
+			otherBranches = append(otherBranches, branch)
+		}
+	}
+
+	// Sort priority branches (main before master)
+	for i := 0; i < len(priorityBranches)-1; i++ {
+		for j := i + 1; j < len(priorityBranches); j++ {
+			if priorityBranches[i] == "master" && priorityBranches[j] == "main" {
+				priorityBranches[i], priorityBranches[j] = priorityBranches[j], priorityBranches[i]
+			}
+		}
+	}
+
+	// Sort other branches alphabetically
+	for i := 0; i < len(otherBranches)-1; i++ {
+		for j := i + 1; j < len(otherBranches); j++ {
+			if otherBranches[i] > otherBranches[j] {
+				otherBranches[i], otherBranches[j] = otherBranches[j], otherBranches[i]
+			}
+		}
+	}
+
+	// Combine: priority branches first, then others
+	result := append(priorityBranches, otherBranches...)
+	return result
 }
 
 // AddWorktree adds a new worktree

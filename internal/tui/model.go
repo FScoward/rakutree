@@ -259,7 +259,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				items[i] = item{title: branch, desc: ""}
 			}
 			m.list.SetItems(items)
-			m.list.Title = "Select an existing branch (press ESC to cancel)"
+			m.list.SetFilteringEnabled(true)
+			m.list.Title = "Select an existing branch (type to filter, ESC to cancel)"
 			m.state = addView
 
 		case "Create new branch":
@@ -277,7 +278,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				items[i] = item{title: branch, desc: "Base branch for new branch"}
 			}
 			m.list.SetItems(items)
-			m.list.Title = "Select base branch (press ESC to cancel)"
+			m.list.SetFilteringEnabled(true)
+			m.list.Title = "Select base branch (type to filter, ESC to cancel)"
 			m.state = newBranchBaseView
 		}
 
@@ -473,6 +475,7 @@ func (m *Model) resetMenuItems() {
 		item{title: "Quit", desc: "Exit the application"},
 	}
 	m.list.SetItems(items)
+	m.list.SetFilteringEnabled(false)
 	m.list.Title = "Git Worktree Manager"
 }
 
