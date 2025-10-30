@@ -83,8 +83,9 @@ func ListBranches() ([]string, error) {
 		if line == "" {
 			continue
 		}
-		// Remove '* ' prefix and 'remotes/origin/' prefix
+		// Remove '* ' and '+ ' prefix and 'remotes/origin/' prefix
 		line = strings.TrimPrefix(line, "* ")
+		line = strings.TrimPrefix(line, "+ ")
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "remotes/origin/") {
 			line = strings.TrimPrefix(line, "remotes/origin/")
