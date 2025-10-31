@@ -303,28 +303,25 @@ func extractPattern(path, branch string) string {
 
 // applyPattern applies a pattern template to a new branch name
 func applyPattern(pattern pathPattern, branch string) string {
-	// Normalize branch name for path
-	normalizedBranch := strings.ReplaceAll(branch, "/", "-")
-
-	path := strings.ReplaceAll(pattern.Template, "{branch}", normalizedBranch)
+	// Keep branch hierarchy intact (e.g., feature/auth → feature/auth)
+	path := strings.ReplaceAll(pattern.Template, "{branch}", branch)
 	return path
 }
 
 // getDefaultSuggestions returns default path suggestions when no patterns are learned
 func getDefaultSuggestions(branch string) []PathSuggestion {
-	normalizedBranch := strings.ReplaceAll(branch, "/", "-")
-
+	// Keep branch hierarchy intact (e.g., feature/auth → feature/auth)
 	// Get repository name for some suggestions
 	repoName := getRepoName()
 
 	suggestions := []PathSuggestion{
 		{
-			Path:        fmt.Sprintf("../%s", normalizedBranch),
+			Path:        fmt.Sprintf("../%s", branch),
 			Description: "Sibling directory (default)",
 			IsCustom:    false,
 		},
 		{
-			Path:        fmt.Sprintf("../worktrees/%s", normalizedBranch),
+			Path:        fmt.Sprintf("../worktrees/%s", branch),
 			Description: "Organized in worktrees folder",
 			IsCustom:    false,
 		},
@@ -332,7 +329,7 @@ func getDefaultSuggestions(branch string) []PathSuggestion {
 
 	if repoName != "" {
 		suggestions = append(suggestions, PathSuggestion{
-			Path:        fmt.Sprintf("../%s-%s", repoName, normalizedBranch),
+			Path:        fmt.Sprintf("../%s-%s", repoName, branch),
 			Description: "With repository name prefix",
 			IsCustom:    false,
 		})
